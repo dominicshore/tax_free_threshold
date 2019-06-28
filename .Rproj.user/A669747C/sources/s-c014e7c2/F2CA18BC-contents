@@ -1,0 +1,22 @@
+##This chunk converts PIT rates from nominal to real
+# Downloading CPI data from ABS website in xls form
+target = "https://www.abs.gov.au/ausstats/meisubs.nsf/log?openagent&640101.xls&6401.0&Time%20Series%20Spreadsheet&F3402A7CC5A1CD14CA2583E5001D69C2&0&Mar%202019&24.04.2019&Latest"
+dest = 'downloaded_file.xls'
+
+download.file(url = target, destfile = dest, mode='wb')
+
+# Importing and cleaning the data
+cpi <- read_excel(path = "./downloaded_file.xls", sheet = "Data1", skip = 9) %>% 
+  clean_names() %>% 
+  select(series_id, a2325847f) %>% 
+  rename(year = series_id, cpi_yoy = a2325847f)
+
+# Subsetting the data to financial year obs only. Rationale: Tax is withheld through the financial year 
+# therefore use of the June CPI is appropriate
+cpi <- cpi[as.numeric(strftime(cpi$year, "%m")) %in% 6,]
+cpi <- cpi[as.numeric(strftime(cpi$year, "%Y")) %in% 2016:1983,]
+
+cpi <- cpi %>% 
+  mutate(
+    year = substring(.$year, 0, 4)
+  )

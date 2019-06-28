@@ -1,0 +1,18 @@
+
+from <- c("CAD", "JPY", "USD")
+to <- c("USD", "USD", "EUR")
+getQuote(paste0(from, to, "=X"))
+
+from <- c("CAD", "JPY", "USD")
+to <- rep_len("USD", length.out = length(from))
+getQuote(paste0(from, to, "=X"))
+
+
+
+country_codes <- read_html("https://www.nationsonline.org/oneworld/country_code_list.htm") %>%
+  html_table(fill = TRUE) 
+
+country_codes <- as_tibble(country_codes[[1]]) %>% 
+  rename("test" = "X1", "full_name" = "X2", "cnt_code" = "X4") %>% 
+  select(full_name, cnt_code) %>% 
+  filter(full_name != cnt_code)

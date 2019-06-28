@@ -1,0 +1,27 @@
+{
+    "collab_server" : "",
+    "contents" : "",
+    "created" : 1561516347780.000,
+    "dirty" : false,
+    "encoding" : "UTF-8",
+    "folds" : "",
+    "hash" : "0",
+    "id" : "C12E3B4D",
+    "lastKnownWriteTime" : 1561622284,
+    "last_content_update" : 1561633265828,
+    "path" : "/cloud/project/Tax_Free_Threshold.Rmd",
+    "project_path" : "Tax_Free_Threshold.Rmd",
+    "properties" : {
+        "cursorPosition" : "675,8",
+        "last_setup_crc32" : "",
+        "scrollLine" : "656",
+        "source_window_id" : ""
+    },
+    "read_only" : false,
+    "read_only_alternatives" : [
+    ],
+    "relative_order" : 2,
+    "source_on_save" : false,
+    "source_window" : "",
+    "type" : "r_markdown"
+}

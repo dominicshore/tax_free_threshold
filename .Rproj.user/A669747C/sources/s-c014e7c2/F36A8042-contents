@@ -1,0 +1,11 @@
+country   number    MR     TH  MR_1 cumm_tax_amt
+<chr>     <chr>  <dbl>  <dbl> <dbl>        <dbl>
+1 Australia 01       0    18200  19              0
+2 Australia 02      19    37000  32.5         3572
+3 Australia 03      32.5  87000  37          19822
+4 Australia 04      37   180000  45          54232
+
+5 Belgium   01      25     9120  30           2280
+6 Belgium   02      30    12990  40           3441
+7 Belgium   03      40    21640  45           6901
+8 Belgium   04      45    39660  50          15010

@@ -1,0 +1,14 @@
+url <- "https://www.ato.gov.au/Rates/Individual-income-tax-for-prior-years/"
+df <- url %>%
+  read_html() %>%
+  html_table() %>%
+  setNames(., url %>%
+             read_html() %>%
+             html_nodes("caption") %>%
+             html_text())
+
+purrr::map(df,.%>%
+             mutate(`Tax on this income` = gsub(",", "", `Tax on this income`), 
+                    col1 = str_extract(`Tax on this income`, "(?<=^\\$)\\d+"), 
+                    col2 = str_extract(`Tax on this income`, "\\d+.(\\d+)?(?=c)"), 
+                    col3 = str_extract(`Tax on this income`, "(?<=\\$)\\d+$")))

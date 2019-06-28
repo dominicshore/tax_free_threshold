@@ -1,0 +1,6 @@
+url_fx <- "https://fxtop.com/en/countries-currencies.php"
+url_fx %>%
+  read_html() %>%
+  html_nodes("//td//td//td//td//a | //td//td//td//td | //th") %>% 
+  html_text()
+

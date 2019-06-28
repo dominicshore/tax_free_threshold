@@ -1,0 +1,26 @@
+{
+    "collab_server" : "",
+    "contents" : "",
+    "created" : 1561508182949.000,
+    "dirty" : true,
+    "encoding" : "UTF-8",
+    "folds" : "",
+    "hash" : "0",
+    "id" : "F1194B70",
+    "lastKnownWriteTime" : 1561514782,
+    "last_content_update" : 1561514875822,
+    "path" : "/cloud/project/oecd_atr_plots.R",
+    "project_path" : "oecd_atr_plots.R",
+    "properties" : {
+        "cursorPosition" : "83,0",
+        "scrollLine" : "53",
+        "tempName" : "Untitled2"
+    },
+    "read_only" : false,
+    "read_only_alternatives" : [
+    ],
+    "relative_order" : 2,
+    "source_on_save" : false,
+    "source_window" : "",
+    "type" : "r_source"
+}

@@ -1,0 +1,55 @@
+df <- read_csv(file = "TABLE_I1_13062019043818530.csv") %>% 
+  clean_names() %>% 
+  filter(centgov_rates != "PERS_ALL_AMNT", centgov_rates != "TAX_CRED_AMNT", centgov_rates != "SURTAX_RATE", year == 2018) %>% 
+  select(country, centgov_rates, value) %>% 
+  arrange(country, centgov_rates) %>% 
+  separate(centgov_rates, sep = "_", into = c("number", "type")) %>% 
+  spread(type, value) %>% 
+  group_by(country) 
+
+
+## Downloads three digit country codes to match with FX data
+## 
+country_code <- read_html("https://www.iban.com/currency-codes") %>%
+  html_table(fill = TRUE) 
+
+country_codes <- country_code[[1]] %>% 
+  clean_names() %>% 
+  as_tibble() %>% 
+  select(country, code) %>% 
+  mutate(
+    country = str_to_title(country)
+  )
+
+df_1 <- left_join(df, country_codes, by = "country")  %>% 
+  mutate(
+    code = case_when(
+      country == "Czech Republic" ~ "CZK",
+      country == "Korea" ~ "KRW",
+      country == "Netherlands" ~ "EUR",
+      country == "Slovak Republic" ~ "EUR",
+      country == "United Kingdom" ~ "GBP",
+      country == "United States" ~ "USD",
+      country == "Mexico" ~ "MXN",
+      country == "Switzerland" ~ "CHF",
+      TRUE ~ code
+    )
+  ) %>% 
+  distinct(country, number, MR, TH, code)
+
+
+## Download and clean FX data using the three digit country codes
+##
+from <- unique(df_1$code)
+to <- rep_len("USD", length.out = length(from))
+fx_rates <- getQuote(paste0(from, to, "=X")) %>% 
+  rownames_to_column(var = "code") %>% 
+  clean_names() %>% 
+  mutate(
+    code = str_extract(string = code, pattern = "\\w{3}"),
+    aud_terms = 1/last,
+    cross_aud_terms = 6.905600e-01 * aud_terms
+  ) %>% 
+  select(code, cross_aud_terms)
+
+left_join(df_1, fx_rates)

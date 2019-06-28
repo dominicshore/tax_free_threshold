@@ -1,0 +1,8 @@
+splitted <- strsplit(system("ps -C rsession -o %cpu,%mem,pid,cmd", intern = TRUE), " ")
+df <- do.call(rbind, lapply(splitted[-1], 
+                            function(x) data.frame(
+                                cpu = as.numeric(x[2]),
+                                mem = as.numeric(x[4]),
+                                pid = as.numeric(x[5]),
+                                cmd = paste(x[-c(1:5)], collapse = " "))))
+df

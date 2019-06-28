@@ -1,0 +1,618 @@
+---
+title: "The Tax Free Threshold"
+author: "Dominic Shore"
+date: "`r Sys.Date()`"
+output: tint::tintPdf
+bibliography: skeleton.bib
+link-citations: yes
+---
+
+```{r setup, include=FALSE}
+# load packages used in this note
+library("tidyverse") # requires dplyr ver 0.8.0.1
+library("readxl")    # requires readxl ver 1.3.1
+library("janitor")   # requires janitor ver 1.2.0
+library("bannerCommenter") # not required
+library("ggrepel")
+library("tint") # Template used to create the PDF output
+library("rvest") # Scrapes ATO historical TFT rates webpage
+library("quantmod") # Gets FX data for OECD PIT rates schedule conversion
+
+
+# invalidate cache when the package version changes
+knitr::opts_chunk$set(tidy = TRUE, cache.extra = packageVersion('tint'), echo=FALSE, warning=FALSE, message=FALSE)
+options(htmltools.dir.version = FALSE, encoding = "UTF-8")
+
+```
+
+
+```{r Data Munging, include=FALSE}
+#-----------------------------------------------------------------------------
+#  Local path to Excel file containing 2017 Tax Stats individuals table 2B   -
+#      Import annual (2010-11 to 2016-17) file with janitor name repair      -
+#             Remove residual footnote numbers in variable names             -
+#-----------------------------------------------------------------------------
+
+file_name <- "./ts17individual02lodgmentmethodsextaxablestatusstateageyear.xlsx"
+
+indiv_tax_stats_raw <- read_excel(path = file_name, sheet = "Individuals Table 2B", skip = 2, .name_repair = janitor::make_clean_names)
+
+names(indiv_tax_stats_raw) <- names(indiv_tax_stats_raw) %>%
+  str_remove_all(pattern = "[0-9]+")
+```
+
+``````{r ATR Calculation, include=FALSE}
+#-----------------------------------------------------------------------------------------------------
+#              Calculate _average taxable income_ and _total income or loss_ per cohort              -
+#   Add personal income tax payable with (pit_tft) and without (pit_no_tft) the tax free threshold   -
+#                           Remove letters preceding age cohort descriptors                          -
+#-----------------------------------------------------------------------------------------------------
+
+indiv_tax_stats <- indiv_tax_stats_raw %>%
+  mutate(
+    #variable created to break the total down to the individual level
+    avg_sal_and_wage = salary_or_wages / salary_or_wages_no,
+
+    # Adding variable calculating gross tax liability with the tft
+    # pit_tft includes current tft settings
+    pit_tft = case_when(
+      avg_sal_and_wage <= 18200  ~ 0,
+      avg_sal_and_wage <= 37000  ~ ((avg_sal_and_wage - 18201) * 0.1900),
+      avg_sal_and_wage <= 90000  ~ ((avg_sal_and_wage - 37001) * 0.3250) + 3572,
+      avg_sal_and_wage <= 180000 ~ ((avg_sal_and_wage - 90001) * 0.3700) + 20797,
+      TRUE ~ ((avg_sal_and_wage - 180001) * 0.4500) + 54097),
+
+    # Adding an additional factor to show which tax bracket this cohort fall into and factoring properly
+    bracket = case_when(
+      avg_sal_and_wage <= 18200  ~ "$0 - $18,200",
+      avg_sal_and_wage <= 37000  ~ "$18,201 - $37,000",
+      avg_sal_and_wage <= 90000  ~ "$37,001 - $90,000",
+      avg_sal_and_wage <= 180000 ~ "$90,001 - $180,000",
+      TRUE ~ "$180,001 and over"
+    ) %>% factor(levels = c("$0 - $18,200", "$18,201 - $37,000", "$37,001 - $90,000", "$90,001 - $180,000", "$180,001 and over"), ordered = TRUE),
+
+    # Adding variable calculating fross tax liability without the tft
+    pit_no_tft = case_when(
+      avg_sal_and_wage <= 37000 ~ (avg_sal_and_wage * 0.1900),
+      avg_sal_and_wage <= 90000 ~ ((avg_sal_and_wage - 37001) * 0.3250) + 7030,
+      avg_sal_and_wage <= 180000 ~ ((avg_sal_and_wage - 90001) * 0.3700) + 24255,
+      TRUE ~ ((avg_sal_and_wage - 180001) * 0.4500) + 57555),
+
+    # Refactoring the age range variable to play nicely in r
+    age_range           = factor(str_remove_all(age_range, pattern = "[a-z][.] "), ordered = TRUE) %>% fct_shift(n = -1L),
+    pit_tft_diff        = pit_no_tft - pit_tft,
+
+    #These variables build up the individual level calculations to a total level using the number of taxpayers in each cohort
+    total_pit_tft       = pit_tft * salary_or_wages_no,
+    total_pit_no_tft    = pit_no_tft * salary_or_wages_no,
+    total_pit_tft_diff  = pit_tft_diff * salary_or_wages_no
+  ) %>%
+  select(1, 3:6, avg_sal_and_wage, bracket, number_of_individuals_no, pit_tft, pit_no_tft, pit_tft_diff, salary_or_wages, salary_or_wages_no, total_pit_tft, total_pit_no_tft, total_pit_tft_diff)
+
+```
+
+```{r With and without the TFT, include=FALSE}
+###########################################################################
+###########################################################################
+###                                                                     ###
+###                THE TAX FREE THRESHOLD: PROGRESSIVITY                ###
+###                                                                     ###
+###########################################################################
+###########################################################################
+
+
+##--------------------------------------------------------------
+##  How does the presence of the TFT affect Average Tax Rates?
+##--------------------------------------------------------------
+indiv_tax_stats %>%
+  group_by(bracket) %>%
+  summarise(
+    avg_tax_paid_with_tft = mean(pit_tft, na.rm = T),
+    avg_tax_paid_without_tft = mean(pit_no_tft, na.rm = T)
+  )
+
+avg_rates_data <- tibble(
+  income = seq(from = 1, to = 200000, by = 100),
+  pit_with_tft = case_when(
+    income <= 18200  ~ 0,
+    income <= 37000  ~ ((income - 18201) * 0.1900),
+    income <= 90000  ~ ((income - 37001) * 0.3250) + 3572,
+    income <= 180000 ~ ((income - 90001) * 0.3700) + 20797,
+    TRUE ~ ((income - 180001) * 0.4500) + 54097),
+  pit_without_tft = case_when(
+    income <= 37000 ~ (income * 0.1900),
+    income <= 90000 ~ ((income - 37001) * 0.3250) + 7030,
+    income <= 180000 ~ ((income - 90001) * 0.3700) + 24255,
+    TRUE ~ ((income - 180001) * 0.4500) + 57555),
+  ATR_with_tft    = pit_with_tft / income,
+  ATR_without_tft = pit_without_tft / income
+)
+```
+
+```{r Historical TFT web scrape, include=FALSE}
+##################################################################
+##  Scraping data on historical TFT rates from the ATO website  ##
+##################################################################
+tft_history_ato_web_scrape <- tibble(
+  years = read_html('https://www.ato.gov.au/Rates/Individual-income-tax-for-prior-years/') %>% 
+    html_nodes(xpath = '//*[(@id = "content-main-wrap")]//h3') %>% 
+    html_text(), 
+  "Income Threshold" = read_html('https://www.ato.gov.au/Rates/Individual-income-tax-for-prior-years/') %>% 
+  html_nodes(xpath = '//tr[(((count(preceding-sibling::*) + 1) = 2) and parent::*)]//td[(((count(preceding-sibling::*) + 1) = 1) and parent::*)]//p') %>% 
+  html_text() %>% 
+    str_extract_all(pattern = "(?<=\\$)\\d\\d?,\\d{3}") %>% 
+    str_remove_all(",") %>% 
+    as.numeric()
+) %>% 
+  mutate(
+    "Real Threshold" = `Income Threshold` * 1.03^(as.numeric(rownames(.)) - 1),
+    years            = recode(years, "1999–2000" = "1999-00")
+  ) %>% 
+  gather(key = measure, value = "TFT Threshold", -years)
+
+```
+
+```{r ABS household deflator, include=FALSE}
+## The PIT schedule that is scraped later in this script provides nominial values
+## The Household Consumption Deflator has been chosen to convert historical PIT rates to current prices 
+# Downloads yearly implicit price deflators (5204.0 - Table 4)
+target_def = "https://www.abs.gov.au/AUSSTATS/ABS@ARCHIVE.NSF/log?openagent&5204004_expenditure_on_gdp_ipd.xls&5204.0&Time%20Series%20Spreadsheet&D94B4121516C4490CA258331000C3B8A&0&2017-18&26.10.2018&Latest"
+dest_def = '6204_table_4_def.xls'
+
+download.file(url = target_def, destfile = dest_def, mode='wb')
+
+household_exp_deflator <- read_excel(path = "./6204_table_4_def.xls", sheet = "Data1", skip = 9) %>% 
+  clean_names() %>% 
+  select(series_id, a2420886c) %>% 
+  rename(year = series_id, hh_exp_def = a2420886c)
+
+household_exp_deflator <- household_exp_deflator[as.numeric(strftime(household_exp_deflator$year, "%Y")) %in% 2018:1984,] %>% 
+  mutate(
+    joining_year = substring(.$year, 0, 4),
+    hh_exp_def = hh_exp_def/100
+  )
+##
+```
+
+```{r All historical PITs scrape, include=FALSE}
+## Scrapping the data on historical tax rates from the ATO website
+## Mutates the PIT schedule data to include inflation adjusted PIT threshold amounts
+##
+url <- "https://www.ato.gov.au/Rates/Individual-income-tax-for-prior-years/"
+pit_sch <- url %>%
+  read_html() %>%
+  html_table() %>%
+  setNames(., url %>%
+             read_html() %>%
+             html_nodes("caption") %>%
+             html_text()) %>% 
+  map(. %>%
+    mutate(`Tax on this income` = gsub(",", "", `Tax on this income`), 
+            cumm_tax_amt = str_extract(`Tax on this income`, "(?<=^\\$)\\d+") %>% as.numeric(), 
+            tax_rate = str_extract(`Tax on this income`, "\\d+.(\\d+)?(?=(\\s+)?c)") %>% as.numeric(), 
+            threshold = str_extract(`Tax on this income`, "(?<=\\$)\\d+$") %>% as.numeric()
+           )
+    ) %>%
+  map(~drop_na(.x, threshold)) %>% 
+  map(function(x) { mutate_each(x, funs(replace(., is.na(.), 0))) }) %>%
+  #
+  # Mutation of dataset to include inflation adjusted thresholds begins here
+  #
+  bind_rows(., .id = "id") %>% 
+  mutate(
+    id  = str_replace(.$id, ".*(\\d{2})\\d{2}-(\\d{2})", "\\1\\2") %>% recode(., "192000" = "2000")
+  ) %>% 
+  nest(-id) %>% 
+  left_join(household_exp_deflator, by = c("id" = "joining_year")) %>% 
+  select(-year) %>% 
+  unnest() %>% 
+  mutate(
+    real_threshold = threshold / hh_exp_def,
+    real_cumm_tax_amt = cumm_tax_amt / hh_exp_def
+  ) %>% 
+  split(.$id)
+##
+
+## Establishing an income variable against which taxable income would be calculated
+income <- seq(from = 1, to = 100000, by = 100)
+
+#Define a function for calculating taxable income each year based upon nominal thresholds
+nominial_tax_calc <- function(data, income) {
+  i <-tail(which(income >= data[, 7]), 1)
+  if (length(i) > 0) 
+    return(tibble(income_N = income, 
+                  tax_N = as.numeric((income - data[i, 7]) * (data[i, 6] / 100) + data[i, 5])))
+  else
+    return(tibble(income_N = income, tax_N = 0))
+}
+# 
+
+# As above but for for thresholds calculated in inflation adjusted (real) terms
+real_tax_calc <- function(data, income) {
+  i <-tail(which(income >= data[, 8]), 1)
+  if (length(i) > 0) 
+    return(tibble(income_R = income, 
+                  tax_R = as.numeric((income - data[i, 8]) * (data[i, 6]/100) + data[i, 9])))
+  else
+    return(tibble(income_R = income, tax_R = 0))
+}
+##
+
+## Applying above functions to the PIT schdule data scrapped from the ATO website (above)
+# Tax payable based on nominal thresholds 
+nom_tax_payable <- map(pit_sch,~map_df(income, nominial_tax_calc, data = .)) %>% 
+  bind_rows(.id = 'id')
+
+# As above, based on real thresholds
+rel_tax_payable <- map(pit_sch,~map_df(income, real_tax_calc, data = .)) %>% 
+  bind_rows(.id = 'id')
+##
+
+## Join real and nominial datasets then mutate to calculate nominal and real average tax rates 
+## before assigning the relevant decade to each obs
+hist_taxable_income <- left_join(rel_tax_payable, nom_tax_payable, by = c("id" = "id", "income_R" = "income_N")) %>% 
+  mutate(
+    real_atr = tax_R / income,
+    nominal_atr = tax_N / income
+    ) %>% 
+  rename(year_ending = id, income = income_R) %>% 
+  nest(-year_ending) %>% 
+  arrange(desc(year_ending)) %>% 
+  mutate(
+    decade = c(rep("2010's", times = 7), rep("2000's", times = 10), rep("1990's", times = 10), rep("1980's", times = 7))
+  ) %>% 
+  unnest()
+##
+
+
+p2_real_atr_decade_chart <- ggplot(data = hist_taxable_income, aes(x = income, y = real_atr, colour = year_ending)) +
+  geom_line() + 
+  facet_wrap(vars(decade)) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  scale_x_continuous(labels = scales::dollar) +
+  theme_light() + 
+  labs(
+    y = "",
+    x = "",
+    title = "Average personal income tax rates",
+    subtitle = "1983-84 to 2016-17",
+    caption = "Source: Tax Framework Division"
+  ) + 
+  theme(
+    panel.grid = element_blank(),
+    panel.grid.major.y = element_line(colour = "grey80", linetype = "dashed"),
+    axis.text.x = element_text(angle = 90, vjust = 0.4, hjust = 1)
+  )
+
+```
+
+
+
+`r newthought("The Tax Free Threshold")`  (TFT) is a band of income to which no individual income tax is applied. It serves a dual purpose in the tax system of reducing administrative and compliance costs for low income individuals while also enhancing the progressivity of the system. The feature was built into the Federal income tax settings as early as 1953 (when the States surrendered their income tax rights to the Commonwealth).
+
+The reduction in **compliance burden** arises in two ways: first, by excluding low-income (<\$18,300) taxpayers from the system fewer people need to determine how the tax law applies to their circumstances and file a return with the Australian Taxation Office (ATO); and secondly, the significant administrative costs involved with handling low-Revenue interactions with taxpayers are  eliminated for the ATO. 
+
+The contribution of the TFT to **progressivity**^[A progressive tax system is defined as one where the average rate of tax increases as income increases] is significant. As we will see later in this note, the presence of the TFT shields taxpayers of at all income levels from up to \$3,458 of  additional income tax. That availability raises the question of whether the benefit could be better targetted towards lower-income taxpayers, with resulting savings potentially used to flatten the PIT structure. This note attempts to deal with the question surrounding the distribution of the TFT benefits and the cost involved in removing it while providing compensation to various categories of low-income taxpayers. We'll explore the costs and benefits in more detail, but first...
+
+# ...some history.
+The TFT has been a feature of the personal income tax system since it was consolidated by the federal government in  1953. While the TFT has been modified eight times since the 1983-84 income year the real value of the income exemption had been following a downward trend until 2011 (see Figure 1). The panel on the following page shows ATR's for every year over the period, with line colour mapped to each of the decades (brown = 80's, green = 90's, blue = 2000's, and violet = 2010's). The impact on ATR's over the period is clearly seen in the trending reduction in the real value of the TFT from \$12,980 in 1983-84 to \$6,550 in 2012. As the TFT was erroded by inflation, other elements of the PIT also became less progressive as marginal rates were reduced.
+
+
+```{r historical_TFT_rate, fig.margin = TRUE, fig.cap = "Historical TFT rate", fig.width=3.5, fig.height=3.5, cache=TRUE}
+ggplot(data = tft_history_ato_web_scrape, aes(x = years, y = `TFT Threshold`, colour = measure)) + 
+  geom_point() + 
+  geom_text(aes(x = 5, y = 14000), label = "TFT\n(real terms)", size = 2.2, colour = "#440154FF") +
+  geom_text(aes(x = 4, y = 7000), label = "TFT\n(nominal terms)", size = 2.2, colour = "#21908CFF") +
+  scale_y_continuous(labels = scales::dollar) +
+  theme_light() + 
+  labs(
+    y = "",
+    x = ""
+  ) + 
+  theme(
+    panel.grid = element_blank(),
+    axis.text.x = element_text(angle = 90, vjust = 0.4, size = 6),
+    axis.text.y = element_text(size = 6),
+    legend.position = "none"
+  ) + 
+  scale_colour_manual(values=c("#21908CFF", "#440154FF"))
+```
+
+However, the trend to lower real TFT's was broken when the Gillard Government legislated its signiture Carbon Polultion Reduction Scheme and set the current threshold amount at \$18,200^[Clean Energy (Income Tax Rates Amendments) Bill 2011]. The increase in the TFT and changes to the marginal rate schdule were part of a package of measures designed to ensure that the average low and middle-income earners were not financially disadvantaged by the introduction of the carbon pricing mechanism. The changes were also buttressed by the recommendation made by Australia's Future Tax System (AFTS) report some three years earlier:
+
+> "Progressivity in the tax and transfer system should be delivered through the personal income tax rates scale and transfer payments. A high tax-free threshold with a constant marginal rate for most people should be introduced to provide greater transparency and simplicity."
+>
+> `r tint::quote_footer('--- Australia’s Future Tax System review, Recommendation 2')`
+
+```{r, fig.width=10, fig.height = 5, fig.fullwidth = TRUE, warning=FALSE, cache=TRUE}
+ggplot(data = hist_taxable_income, aes(x = income, y = real_atr, colour = year_ending)) +
+  geom_line() + 
+  #facet_wrap(vars(decade)) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  scale_x_continuous(labels = scales::dollar) +
+  theme_light() + 
+  labs(
+    y = "",
+    x = "",
+    title = "Down, down. Prices are down...",
+    subtitle = "Real average personal income tax rates 1983-84 to 2016-17",
+    caption = "Source: Tax Framework Division"
+  ) + 
+  theme(
+    panel.grid = element_blank(),
+    panel.grid.major.y = element_line(colour = "grey80", linetype = "dashed"),
+    axis.text.x = element_text(angle = 90, vjust = 0.4, hjust = 1), 
+    legend.title = element_blank()
+  )
+```
+
+The increase in the TFT to \$18,200 brought with it the highest real TFT seen in recent Australian history. Interestingly, the higher TFT setting withstood the consequential amendments resulting from [the repeal of the of the carbon pricing mechanism](https://www.aph.gov.au/About_Parliament/Parliamentary_Departments/Parliamentary_Library/pubs/rp/rp1314/QG/CarbonPriceRepealBills) in the context of the the Abbott Government's Budget austerity drive during the 2013-14 sittings of Parliament. With this example in mind it is interesting to consider the hesitance to legislate an automatic indexation of the PIT rate schedule.
+
+<!-- I was interested to explore the varous facets of the TFT as concretely as I could so the ... seemed an obvious place to start. While there remains a question about the extent to which the data has been modified to comply with the taxpayer secrecy provisions (primarily to be found in Div 355 _Taxation Administration Act_ 1953) what follows will hopefully provide some useful estimates of: -->
+<!-- 1. the distribution of the benefit -->
+
+# The TFT reduces compliance costs...
+`r newthought("Many low-income taxpayers are carved out")` of the requirement to file their tax returns by virtue of the TFT. This is a key benefit of the TFT given the associated compliance cost savings for taxpayers and the administrative savings for the Government. The [most recent release](https://www.ato.gov.au/About-ATO/Research-and-statistics/In-detail/Taxation-statistics/Taxation-statistics-2016-17/) of Taxation Statistics by the ATO reveals that roughly 3.4 million taxpayers reported gross income below the TFT (Figure 2). Contained in this figure are young people working part-time jobs who do not need to engage with the tax system because of the TFT. Similarly, those who are in receipt of a [tax-exempt government transfer](https://www.ato.gov.au/Individuals/Tax-Return/2018/Before-you-start/Amounts-that-you-do-not-pay-tax-on-2018/?=redirected) (such as ABSTUDY, Commonwealth scholarships, and certain child care benefits) whose only other income is interest income from a bank savings account with a relatively modest balance. These tax payers are sheilded from the need to bear the costs involved in engagement with the system Similarly, the assoicated adminstrative cost bourne by the ATO in administering these low or negative value transactions is saved.
+
+```{r taxpayer_by_bracket, fig.margin = TRUE, fig.cap = "Taxpayers by bracket in 2016-17", fig.width=3.5, fig.height=3.5, cache=TRUE}
+indiv_tax_stats %>%
+  filter(income_year == "2016–17") %>%
+  group_by(bracket) %>%
+  tally(number_of_individuals_no, name = "tax_payers") %>%
+  ggplot(aes(x = bracket, y = tax_payers, fill = bracket)) +
+  geom_col() +
+  geom_text(
+    aes(label = format(tax_payers, big.mark = ","), colour = bracket, y = tax_payers + 10000),
+    vjust = -0.5,
+    size = 3
+  ) +
+  scale_y_continuous(scales::comma, expand = expand_scale(mult = c(0, 0.1))) +
+  labs(
+    x = "",
+    y = "",
+    title = "",
+    caption = "Source: Tax Stats (2017) - Individuals table 2B"
+  ) +
+  theme_light() +
+  theme(
+    legend.position = 'none',
+    panel.grid =  element_blank(),
+    panel.grid.major.x = element_blank(),
+    axis.title.y=element_blank(),
+    axis.text.y=element_blank(),
+    axis.ticks.y=element_blank(),
+    axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.6),
+    panel.border = element_blank(),
+    axis.line.x = element_line(colour = "grey80")
+  )
+
+```
+The number of low-income taxpayers affected by the TFT is likely to be understated by the Tax Stats data. When considering this data on the number of taxpayers earning below the TFT, it is likely that a substantial proportion of these taxpayers will have filed in order to claim an overpayment of PAYG withholding tax. Absent from these numbers are taxpayers whose gross incomes were below the TFT and chose not to engage with the system, perhaps because they believed that the PAYG installments were correct to an acceptable margin of error or they did not want to deal with the complexity associated with filing. [Any thoughts on this explanation would be appreciated]
+
+`r newthought("The presence")` of the TFT affects Average Tax Rates (ATR) by reducing them at all income levels (Figure 3). In terms of the amount of **additional tax paid**, the impact reaches its maximum in the case of an individual earning \$18,201 dollars per annum who woud be liable for additional \$3,458.00 (\$18,200 x 19%) (the full value of the TFT). 
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.cap="Average tax payments by tax backet based on 2016-17 PIT rates"}
+ knitr::kable(x =
+   indiv_tax_stats %>%
+     group_by(bracket) %>%
+     summarise(
+       avg_tax_paid_with_tft = mean(pit_tft, na.rm = T),
+       avg_tax_paid_without_tft = mean(pit_no_tft, na.rm = T)
+     ),
+     digits = 0,
+     format.args = c(big.mark = ","),
+     col.names = c("Tax Bracket", "with TFT", "without TFT")
+   )
+```
+
+If the TFT were to be removed, **the affect on average tax rates** (the measure used to assess the impact upon progressivity) would be to equate those who have earned \$1.00 with those earning \$62,701 in the presence of the TFT. [?could this be made clearer?]. Those earning an [average salary of \$86,974.29](https://www.abs.gov.au/AUSSTATS/abs@.nsf/Latestproducts/6302.0Main%20Features3Nov%202018?opendocument&tabname=Summary&prodno=6302.0&issue=Nov%202018&num=&view=) would pay an additional \$3,458 in tax in the absence of the TFT, representing an increase in total tax paid of 17.5 per cent.
+
+```{r fig-one, fig.margin=TRUE, fig.width=4, fig.height=4, cache=TRUE, echo=FALSE, fig.cap = "Average tax rates with and without the TFT based on 2016-17 PIT rates"}
+ avg_rates_data %>%
+   select(
+     income,
+     ATR_with_tft,
+     ATR_without_tft
+   ) %>%
+   gather(key = ATR, value = value, - income) %>%
+   mutate(ATR_label = case_when(income == 100001 & ATR == "ATR_with_tft" ~ "with TFT",
+                                income == 125001 & ATR == "ATR_without_tft" ~ "without TFT",
+                                TRUE ~ NA_character_)
+   ) %>%
+   ggplot(aes(x = income, y = value, colour = ATR)) +
+   geom_hline(yintercept = 0, colour = "black") +
+   geom_line(size = 1.5) +
+   scale_y_continuous(labels = scales::percent_format(accuracy = 1), expand = expand_scale(c(0, 0.1))) +
+   scale_x_continuous(labels = scales::dollar, expand = expand_scale(c(0, 0))) +
+   theme_light() +
+   labs(
+     x = "",
+     y = "",
+     title = "",
+     caption = "Source: Tax Framework Division"
+   ) +
+   theme(
+     legend.position = 'none'
+   ) +
+   geom_text(aes(x = 120000, y = 0.325), label = "Without TFT", size = 3, colour = "#440154FF") +
+   geom_text(aes(x = 150000, y = 0.25), label = "With TFT", size = 3, colour = "#21908CFF") +
+   scale_colour_manual(values=c("#21908CFF", "#440154FF"))
+```
+
+# ...but it costs a lot of money
+It is clear that compliance and administrative costs would be substaintly higher if the TFT were removed, but so too would receipts^[There remains a question about the extent to which the data has been modified to comply with the taxpayer secrecy provisions (primarily to be found in Div 355 of the _Taxation Administration Act_ 1953) what follows will hopefully provide useful estimates of the revenue involved in such a change.]. Removing the TFT in the 2016-17 income year would have raised roughly \$35.5 billion. The panel below shows that the vast majority of the additional receipts are drawn from those on middle incomes which is unsurprising given the distribution of taxpayers shown in Figure 2.
+
+Some of these receipts may need to be passed back to low-income earners through the transfers system if the goal of any change to the TFT was to leave poverty levels in Australia broadly undisturbed. The value of that transfer would amount to between \$5-6 billion leaving roughly \$30 billion from the removeal of the TFT. This residual is perhaps a good way to think about the value of the "tax expenditure"^[To be clear, the TFT isn't classed as a tax expenditure in the TES] to accrues to those that are not in need of transfers from the government (middle and high-income Australian's).
+
+# Return to effort and the 'Fair Share'
+
+`r newthought("So middle Australia")` would bear the cost involved with the removeal of the TFT but perhaps a package of reform could be designed to the revenue neutral so that the **return to work** for those paying the cost was enhanced while a number common **tax planning** strategies were rendered ineffective. 
+
+Enhancing the **return to work** might be achieved by flattening of the PIT rate schedule, which has the added benefit of sharpening labour force participation incentives. Ultimately the rates that received the largest reductions would be determined by government but one way to emilorate any criticism of the policy change would be to ensure that those from whom the tax is collected, enjoy a comensurate reduction in their respective brackets. Finally, it is worth noting that the government's recent efforts to flatten the PIT rate schedule have been successful but have been estimated to cost the revenue roughly $298 billion over the decade ahead - roughly the amount which could be raised by removing TFT.
+
+```{r, fig.width=10, fig.height = 5, fig.fullwidth = TRUE, warning=FALSE, cache=TRUE}
+##################################################################
+##          How much income would need to be returned?          ##
+##################################################################
+indiv_tax_stats %>%
+  group_by(income_year, bracket) %>%
+  summarise(
+    "Total Additional Tax" = sum(total_pit_tft_diff/1000000000, na.rm = TRUE)
+  ) %>%
+  ggplot(aes(x = bracket, y = `Total Additional Tax`, fill = bracket)) +
+  geom_col() +
+  geom_text(
+    aes(label  = format(round(`Total Additional Tax`, 1), big.mark = ","), 
+        colour = bracket, fontface = "bold", y = `Total Additional Tax`),
+        vjust  = 0.25,
+        hjust  = -0.3,
+        size   = 3,
+        angle  = 90
+  ) +
+  facet_grid(cols = vars(income_year)) +
+  scale_y_continuous(
+    labels = scales::dollar,
+    expand = expand_scale(mult = c(0, 0.2)),
+    breaks = c(10, 15, 20, 25)
+  ) +
+  labs(
+    x = "",
+    y = "",
+    title = "Removing the Tax Free Threshold",
+    subtitle = "Additional revenue ($bn) collected by tax bracket over period 2010–11 to 2016–17",
+    caption = "Source: Tax Stats (2017) - Individuals table 2B"
+  ) +
+  theme_light() +
+  theme(
+    legend.position = 'none',
+    axis.text.x = element_text(angle = 90, vjust = 0.4, hjust = 1, size = 8),
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_blank(),
+    axis.ticks = element_blank(),
+    axis.text.y = element_blank(),
+    axis.title.y = element_text(size = 8),
+    plot.title = element_text(size = 12),
+    plot.subtitle = element_text(size = 10),
+    strip.text = element_text(size = 8)
+  )
+```
+
+A number common **tax planning** strategies rely heavily on the presence of the TFT to avoid income tax. The most typical of these strategies involves income being paid to a family trust which in turn makes distributions to family members with low or no taxable income. The after tax income of the family unit is greatly enhanced by the presence of multiple TFT's (and lower marginal rates). Removing the TFT would render these strategies ineffective and enhance the sustainability of the PIT system.
+
+#What are the Nords doing?
+```{r OECD_data_PIT_schedules, echo=FALSE}
+## This function is called below to apply each PIT schedule to the variable "income"
+## OUTPUT - Scalar: tax payable
+## 
+oecd_atr_calc <- function(data, income) {
+  i <-tail(which(income >= data[, 4]), 1)
+  if (length(i) == 0 & data[[1,3]] != 0)  {
+    return(tibble(income = income, 
+                  tax = as.numeric(income * (data[1, 3]/100))))
+  
+  } else if (length(i) > 0)  {
+    return(tibble(income = income, 
+                  tax = as.numeric((income - data[i, 4]) * (data[i, 5]/100) + data[i, 6])))
+  
+  } else {
+    return(tibble(income = income, tax = 0))
+  }
+}
+
+
+## In order to normalise the PIT rate schedules for common plotting, the thresholds to which they apply
+## will be converted to a common base (AUD).
+## 
+## The following chunks download currency codes before joining them with the relevent OECD countries and
+## finially downloading FX data to match.
+##  
+# Downloads three digit country codes to match with FX data
+
+country_code <- read_html("https://www.iban.com/currency-codes") %>%
+  html_table(fill = TRUE) 
+
+country_codes <- country_code[[1]] %>% 
+  clean_names() %>% 
+  as_tibble() %>% 
+  select(country, code) %>% 
+  mutate(
+    country = str_to_title(country)
+  )
+
+## Download data on PIT schedules of OECD members
+# site: https://stats.oecd.org/index.aspx?DataSetCode=TABLE_I1
+# 
+oecd_PIT_schedules <- read_csv(file = "TABLE_I1_13062019043818530.csv") %>% 
+  clean_names() %>% 
+  filter(centgov_rates != "PERS_ALL_AMNT", centgov_rates != "TAX_CRED_AMNT", centgov_rates != "SURTAX_RATE", year == 2018) %>% 
+  select(country, centgov_rates, value) %>% 
+  arrange(country, centgov_rates) %>% 
+  separate(centgov_rates, sep = "_", into = c("number", "type")) %>% 
+  spread(type, value) %>% 
+  left_join(country_codes, by = "country")  %>% 
+  mutate(
+    code = case_when(
+      country == "Czech Republic" ~ "CZK",
+      country == "Korea" ~ "KRW",
+      country == "Netherlands" ~ "EUR",
+      country == "Slovak Republic" ~ "EUR",
+      country == "United Kingdom" ~ "GBP",
+      country == "United States" ~ "USD",
+      country == "Mexico" ~ "MXN",
+      country == "Switzerland" ~ "CHF",
+      TRUE ~ code
+    )
+  ) %>% 
+  distinct(country, number, MR, TH, code)
+
+## Download and clean FX data using the three digit country codes
+##
+from <- unique(oecd_PIT_schedules$code)
+to <- rep_len("USD", length.out = length(from))
+fx_rates <- getQuote(paste0(from, to, "=X")) %>% 
+  rownames_to_column(var = "code") %>% 
+  clean_names() %>% 
+  mutate(
+    code = str_extract(string = code, pattern = "\\w{3}"),
+    aud_terms = 1/last,
+    cross_aud_terms = 1.4477 / aud_terms
+  ) %>% 
+  select(code, cross_aud_terms)
+
+  
+oecd_PIT_liability <- left_join(oecd_PIT_schedules, fx_rates) %>% 
+  group_by(country) %>% 
+  mutate(
+    TH = TH * cross_aud_terms,
+    MR_1 = lead(MR),
+    intermediate_var = case_when(
+      MR =! 0 & number == "01" ~ TH * (MR /100),
+      MR == 0  ~ 0,
+      TRUE ~ (TH - lag(TH)) * (MR / 100)),
+    cumm_tax_amt = cumsum(intermediate_var)
+  ) %>% 
+  select(-intermediate_var, -code, - cross_aud_terms) %>% 
+  drop_na() %>% 
+  group_by(country) %>% 
+  mutate(
+    intermediate_var = case_when(
+      MR =! 0 & number == "01" ~ TH * (MR /100),
+      MR == 0  ~ 0,
+      TRUE ~ (TH - lag(TH)) * (MR / 100)),
+    cumm_tax_amt = cumsum(intermediate_var)
+  ) %>% 
+  select(-intermediate_var) %>% 
+  drop_na() %>% 
+  ungroup() %>% 
+  split(.$country) %>% 
+  map(~map_df(income, oecd_atr_calc, data = .)) %>% 
+  bind_rows(.id = 'country') %>% 
+  group_by(country) %>% 
+  mutate(
+    atr = tax / income
+  ) %>% 
+  ungroup()
+
+```
+
+#Conclusion

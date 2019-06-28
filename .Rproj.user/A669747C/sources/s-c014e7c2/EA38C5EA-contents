@@ -1,0 +1,5 @@
+https://www.ato.gov.au/Rates/Individual-income-tax-for-prior-years/
+  
+read_html('https://www.ato.gov.au/Rates/Individual-income-tax-for-prior-years/') %>% 
+  html_nodes(xpath = '//tr[(((count(preceding-sibling::*) + 1) = 3) and parent::*)]//td+//td//p') %>% 
+  html_text()

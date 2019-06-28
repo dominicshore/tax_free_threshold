@@ -1,0 +1,36 @@
+pit_sch <- list(`2016` = structure(list(id = c("2016", "2016", "2016", "2016"
+), hh_exp_def = c(0.989, 0.989, 0.989, 0.989), `Taxable income` = c("$18,201 – $37,000", 
+                                                                    "$37,001 – $80,000", "$80,001 – $180,000", "$180,001 and over"
+), `Tax on this income` = c("19c for each $1 over $18200", "$3572 plus 32.5c for each $1 over $37000", 
+                            "$17547 plus 37c for each $1 over $80000", "$54547 plus 45c for each $1 over $180000"
+), cumm_tax_amt = c(0, 3572, 17547, 54547), tax_rate = c(19, 
+                                                         32.5, 37, 45), threshold = c(18200, 37000, 80000, 180000), real_threshold = c(18402.4266936299, 
+                                                                                                                                       37411.5267947422, 80889.7876643074, 182002.022244692), real_cumm_tax_amt = c(0, 
+                                                                                                                                                                                                                    3611.72901921132, 17742.16380182, 55153.6905965622)), class = c("tbl_df", 
+                                                                                                                                                                                                                                                                                    "tbl", "data.frame"), row.names = c(NA, -4L)), `2017` = structure(list(
+                                                                                                                                                                                                                                                                                      id = c("2017", "2017", "2017", "2017"), hh_exp_def = c(1, 
+                                                                                                                                                                                                                                                                                                                                             1, 1, 1), `Taxable income` = c("$18,201 – $37,000", "$37,001 – $87,000", 
+                                                                                                                                                                                                                                                                                                                                                                            "$87,001 – $180,000", "$180,001 and over"), `Tax on this income` = c("19c for each $1 over $18200", 
+                                                                                                                                                                                                                                                                                                                                                                                                                                                 "$3572 plus 32.5c for each $1 over $37000", "$19822 plus 37c for each $1 over $87000", 
+                                                                                                                                                                                                                                                                                                                                                                                                                                                 "$54232 plus 45c for each $1 over $180000"), cumm_tax_amt = c(0, 
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               3572, 19822, 54232), tax_rate = c(19, 32.5, 37, 45), threshold = c(18200, 
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  37000, 87000, 180000), real_threshold = c(18200, 37000, 87000, 
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            180000), real_cumm_tax_amt = c(0, 3572, 19822, 54232)), class = c("tbl_df", 
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              "tbl", "data.frame"), row.names = c(NA, -4L)))
+
+income <- seq(from = 1, to = 100000, by = 100)
+
+# Defining the function which will calculate tax liability for a given set of tax rates (in pit_sch) and income
+nominial_tax_calc <- function(data, income) {
+  data <- as.data.frame(data)
+  i <-pmax(which(income >= data[, 7]))
+  if (length(i) > 0) 
+    return(tibble(income = income, 
+                  tax = (income - data[i, 7]) * (data[i, 6] / 100) + data[i, 5]))
+  else
+    return(tibble(income = income, tax = 0))
+}
+
+# Function that results in the error
+map(pit_sch,~map_df(income, nominial_tax_calc, data = .))
+

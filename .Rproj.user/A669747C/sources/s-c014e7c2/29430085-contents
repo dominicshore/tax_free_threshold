@@ -1,0 +1,28 @@
+oecd_atr_calc <- function(data, income) {
+  i <-tail(which(income >= data[, 4]), 1)
+  if (length(i) > 0 | (length(i) == 0 & data[1,3] != 0))  
+    return(tibble(income = income, 
+                  tax = as.numeric((income - data[i, 4]) * (data[i, 5]/100) + data[i, 6])))
+  else
+    return(tibble(income = income, tax = 0))
+}  
+
+
+df <- oecd_PIT_schedules %>% 
+  filter(country == "Belgium") %>% 
+  group_by(country) %>% 
+  mutate(
+    intermediate_var = case_when(
+      MR =! 0 & number == "01" ~ TH * (MR /100),
+      MR == 0  ~ 0,
+      TRUE ~ (TH - lag(TH)) * (MR / 100)),
+    cumm_tax_amt = cumsum(intermediate_var)
+  ) %>% 
+  select(-intermediate_var) %>% 
+  drop_na() %>% 
+  ungroup() %>% 
+  split(.$country) %>% 
+  map(~map_df(income, oecd_atr_calc, data = .)) %>% 
+  bind_rows(.id = 'country')
+  
+as.numeric((18201 - df[1, 4]) * (df[1, 3]/100) + df[1, 6])

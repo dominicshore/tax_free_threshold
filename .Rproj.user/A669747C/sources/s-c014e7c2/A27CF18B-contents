@@ -1,0 +1,114 @@
+## The PIT schedule that is scraped later in this script provides nominial values
+## The Household Consumption Deflator has been chosen to convert historical PIT rates to current prices 
+# Downloads yearly implicit price deflators (5204.0 - Table 4)
+target_def = "https://www.abs.gov.au/AUSSTATS/ABS@ARCHIVE.NSF/log?openagent&5204004_expenditure_on_gdp_ipd.xls&5204.0&Time%20Series%20Spreadsheet&D94B4121516C4490CA258331000C3B8A&0&2017-18&26.10.2018&Latest"
+dest_def = '6204_table_4_def.xls'
+
+download.file(url = target_def, destfile = dest_def, mode='wb')
+
+household_exp_deflator <- read_excel(path = "./6204_table_4_def.xls", sheet = "Data1", skip = 9) %>% 
+  clean_names() %>% 
+  select(series_id, a2420886c) %>% 
+  rename(year = series_id, hh_exp_def = a2420886c)
+
+household_exp_deflator <- household_exp_deflator[as.numeric(strftime(household_exp_deflator$year, "%Y")) %in% 2018:1983,] %>% 
+  mutate(
+    joining_year = substring(.$year, 0, 4),
+    hh_exp_def = hh_exp_def/100
+  )
+
+
+## Scrapping the data on historical tax rates from the ATO website
+url <- "https://www.ato.gov.au/Rates/Individual-income-tax-for-prior-years/"
+pit_sch <- url %>%
+  read_html() %>%
+  html_table() %>%
+  setNames(., url %>%
+             read_html() %>%
+             html_nodes("caption") %>%
+             html_text()) %>% 
+  map(.%>%
+    mutate(`Tax on this income` = gsub(",", "", `Tax on this income`), 
+            cumm_tax_amt = str_extract(`Tax on this income`, "(?<=^\\$)\\d+") %>% as.numeric(), 
+            tax_rate = str_extract(`Tax on this income`, "\\d+.(\\d+)?(?=(\\s+)?c)") %>% as.numeric(), 
+            threshold = str_extract(`Tax on this income`, "(?<=\\$)\\d+$") %>% as.numeric()
+           )
+    ) %>%
+  map(~drop_na(.x, threshold)) %>% 
+  map(function(x) { mutate_each(x, funs(replace(., is.na(.), 0))) }) 
+# %>% 
+#   bind_rows(.id = 'table_name') %>% 
+#   #as_tibble() %>% 
+#   mutate(
+#     table_name = recode(table_name, "Resident tax rates for 1999-2000" = "Resident tax rates for 1999-00"),
+#     ref_year = str_replace(.$table_name, ".*(\\d{2})\\d{2}-(\\d{2})", "\\1\\2") %>% as.numeric()
+#   ) %>% 
+#   clean_names() %>% 
+#   nest(- ref_year) %>% 
+#   left_join(household_exp_deflator, by = c("ref_year" = "joining_year")) %>% 
+#   unnest() %>% 
+#   mutate(
+#     def_cumm_tax_amt = cumm_tax_amt/hh_exp_def,
+#     def_tax_rate = tax_rate/hh_exp_def,
+#     def_threhold = threshold/hh_exp_def
+#   ) %>% 
+#   select(-year) %>% 
+#   split(.$table_name)
+
+###
+###
+
+
+#Establishing an income variable against which taxable income would be calculated
+income <- seq(from = 1, to = 100000, by = 100)
+
+#Define a function for calculating taxable income each year
+tax_calc <- function(data, income) {
+  i <-tail(which(income >= data[, 5]), 1)
+  if (length(i) > 0) 
+    return(tibble(income = income, 
+                  tax = (income - data[i,5]) * (data[i,4]/100) + data[i,3]))
+  else
+    return(tibble(income = income, tax = 0))
+}
+
+## 
+hist_taxable_income <- map(pit_sch,~map_df(income, tax_calc, data = .)) %>% 
+  bind_rows(., .id = "id") %>% 
+  mutate(
+    ATR = tax / income,
+    id  = str_replace(.$id, ".*(\\d{2})\\d{2}-(\\d{2})", "\\1\\2")
+    ) %>% 
+  rename(year_ending = id, income = income, tax = tax, atr = ATR) %>% 
+  nest(-year_ending) %>% 
+  mutate(
+    decade = c(rep("2010's", times = 7), rep("2000's", times = 10), rep("1990's", times = 10), rep("1980's", times = 7))
+  ) %>% 
+  unnest() %>% 
+  left_join(household_exp_deflator, by = c("year_ending" = "joining_year")) %>% 
+  select(-year) %>% 
+  mutate(
+    defl_tax = tax / hh_exp_def,
+    year_ending = recode(year_ending, "192000" = "2000")
+    )
+  
+
+
+
+hist_taxable_income %>% 
+  #  filter(decade == "1980's") %>% 
+  ggplot(aes(x = income, y = defl_tax, colour = year_ending)) + 
+  geom_line() +
+  #    facet_wrap(vars(decade), nrow = 4) +
+  scale_y_continuous(labels = scales::dollar) +
+  scale_x_continuous(labels = scales::dollar) +
+  theme_light() + 
+  labs(
+    y = "",
+    x = ""
+  ) + 
+  theme(
+    panel.grid = element_blank(),
+    panel.grid.major.y = element_line(colour = "grey80", linetype = "dashed"),
+    axis.text.x = element_text(angle = 90, vjust = 0.4, hjust = 1)
+  )

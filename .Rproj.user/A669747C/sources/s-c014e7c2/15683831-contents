@@ -1,0 +1,18 @@
+read_html('https://www.ato.gov.au/Rates/Individual-income-tax-for-prior-years/') %>% 
+    html_nodes(xpath = '//*[(@id = "content-main-wrap")]//h3') %>% 
+    html_text() 
+
+read_html('https://www.ato.gov.au/Rates/Individual-income-tax-for-prior-years/') %>% 
+    html_nodes(xpath = '//tr[(((count(preceding-sibling::*) + 1) = 2) and parent::*)]//td[(((count(preceding-sibling::*) + 1) = 1) and parent::*)]//p') %>% 
+    html_text() %>% 
+    str_extract_all(pattern = "(?<=\\$)\\d\\d?,\\d{3}") %>% 
+    str_remove_all(",") %>% 
+    as.numeric()
+
+
+read_html('https://www.ato.gov.au/Rates/Individual-income-tax-for-prior-years/') %>% 
+  html_nodes(xpath = '//td//p') %>% 
+  html_text()
+
+
+//table[(((count(preceding-sibling::*) + 1) = 11) and parent::*)]//p
